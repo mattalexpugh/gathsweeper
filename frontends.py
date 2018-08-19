@@ -19,26 +19,15 @@ class GameInterface():
         self._board = Board(num_rows, num_cols, num_mines)
         self._running = False
 
-    def _win(self) -> int:
-        self.render(show_mines=True, msg=self.WINNER_TEXT)
-        return GameInterface.GameStatus.WIN
-
-    def _game_over(self) -> int:
-        self.render(show_mines=True, msg=self.LOSER_TEXT)
-        return GameInterface.GameStatus.LOSE
-
     def run(self) -> int:
-        raise NotImplementedError()
-
-    def render(self, msg: Optional[str] = None, show_mines: bool = False) -> None:
         raise NotImplementedError()
 
 
 class ConsoleBase(GameInterface):
 
-    COVERED = '▒'
-    MARKED = '■'
-    MINE = '¤'
+    COVERED = '■'
+    MARKED = '@'
+    MINE = '×'
 
     def _render_line(self, y: int, show_mines: bool=False) -> str:
         line = []
@@ -66,9 +55,16 @@ class ConsoleBasic(ConsoleBase):
         self._axis_y = self.AXIS_COORDS[:num_rows]
 
     def __convert_str_to_coord(self, loc: str) -> Coord:
-        x, y = loc[1:]
-        x, y = self.AXIS_COORDS.find(x), self.AXIS_COORDS.find(y)
+        x, y = self.AXIS_COORDS.find(loc[1]), self.AXIS_COORDS.find(loc[2])
         return Coord(x, y)
+
+    def _win(self) -> int:
+        self.render(show_mines=True, msg=self.WINNER_TEXT)
+        return GameInterface.GameStatus.WIN
+
+    def _game_over(self) -> int:
+        self.render(show_mines=True, msg=self.LOSER_TEXT)
+        return GameInterface.GameStatus.LOSE
 
     def run(self) -> int:
         self._running = True
@@ -128,41 +124,82 @@ class ConsoleCurses(ConsoleBase):
         stdscr.keypad(1)
         curses.mousemask(1)
 
+        # Need to get some colours for the numbers!
         if curses.has_colors():
             curses.start_color()
 
-        curses.init_pair(1, curses.COLOR_CYAN, curses.COLOR_BLACK)
-        curses.init_pair(2, curses.COLOR_RED, curses.COLOR_BLACK)
-        curses.init_pair(3, curses.COLOR_BLACK, curses.COLOR_WHITE)
+        for i, forecolor in enumerate([ curses.COLOR_WHITE, curses.COLOR_CYAN,
+                                        curses.COLOR_BLUE, curses.COLOR_MAGENTA,
+                                        curses.COLOR_GREEN, curses.COLOR_YELLOW, 
+                                        curses.COLOR_RED, curses.COLOR_RED], start=1):
+            curses.init_pair(i, forecolor, curses.COLOR_BLACK)
 
         stdscr.box()
 
-        # DO some rendering
-        idx_grid_offset_y = 2
-        idx_grid_offset_x = 2
+        # Work out some geometry things
+        height, width = stdscr.getmaxyx()
+        l_row = self._board.num_rows * 2 - 1
+        l_col = self._board.num_cols + 5  # Padding etc
+        idx_grid_offset_y = int((height // 2) - (l_col // 2) - l_col % 2)
+        idx_grid_offset_x = int((width // 2) - (l_row // 2) - l_row % 2)
+        start_y = int((height // 2) - 2)
+        y_title_offset = 3
 
         # State keeping
         key_event = 0
         mark_mode = False
 
-        while self._running:
-            stdscr.clear()
-            height, width = stdscr.getmaxyx()
-            start_y = int((height // 2) - 2)
-            statusbar = " GathSweeper | (q)uit | toggle (m)ark mode | "
-            statusbar += f"Remaining [{self._board.num_mines_remaining}/{self._board.num_mines}]"
+        def render_outcome(msg: str) -> None:
+            # At the end of the game, so show all the mines
+            render_board(show_mines=True)
+            l_msg = len(msg)
+            start_x = int((width // 2) - (l_msg // 2) - l_msg % 2)
+            inner = "═" * (l_msg + 2)
 
-            if mark_mode:
-                statusbar += " | [MARKING]"
+            for i, segment in enumerate([f"╔{inner}╗",  f"║ {msg} ║", f"╚{inner}╝"], start=-1):
+                stdscr.addstr(start_y + i, start_x, segment)
 
-            # Render status bar
-            stdscr.attron(curses.color_pair(3))
-            stdscr.addstr(height - 1, 0, statusbar)
-            stdscr.addstr(height - 1, len(statusbar), " " * (width - len(statusbar) - 1))
-            stdscr.attroff(curses.color_pair(3))
+            # Wait for any input before exiting
+            _ = stdscr.getch()
+            curses.echo()
+            curses.endwin()
+
+        def render_board(show_mines: bool=False) -> None:
+            # Render the current state of the board, dealing with borders, colors etc.
+            inner = "═" * (l_row + 2)
+            remaining = "[{}] {}".format(self._board.num_mines_remaining, "[M]" if mark_mode else "")
+            padding = " " * (l_row - len(remaining))
+
+            for offset, header in enumerate([f"╔{inner}╗", f"║ {remaining}{padding} ║", f"╠{inner}╣"]):
+                stdscr.addstr(idx_grid_offset_y + offset, idx_grid_offset_x, header)
 
             for y in range(self._board.num_rows):
-                stdscr.addstr(y + idx_grid_offset_y, idx_grid_offset_x, self._render_line(y))
+                line = "║ " + self._render_line(y, show_mines=show_mines) + " ║"
+
+                # Check for numeric values in this line, and render colors accordingly
+                for i, ch in enumerate(line):
+                    if ch.isdigit():
+                        stdscr.attron(curses.color_pair(int(ch)))
+    
+                    stdscr.addstr(y + idx_grid_offset_y + y_title_offset, idx_grid_offset_x + i, ch)
+
+                    if ch.isdigit():
+                        stdscr.attroff(curses.color_pair(int(ch)))
+
+
+            stdscr.addstr(self._board.num_rows + idx_grid_offset_y + y_title_offset, idx_grid_offset_x, f"╚{inner}╝")
+
+        while self._running:
+            stdscr.clear()
+            statusbar = " GathSweeper | (q)uit | toggle (m)ark mode"
+
+            # Render status bar
+            stdscr.attron(curses.color_pair(1))
+            stdscr.addstr(height - 1, 0, statusbar)
+            stdscr.addstr(height - 1, len(statusbar), " " * (width - len(statusbar) - 1))
+            stdscr.attroff(curses.color_pair(1))
+
+            render_board()
 
             if key_event == ord("q"):
                 break
@@ -174,27 +211,23 @@ class ConsoleCurses(ConsoleBase):
                 _, mx, my, _, _ = curses.getmouse()
                 key_event = 0
 
-                if mx % 2 != 0:
+                # TODO: Fix this to be dynamic given sizes
+                if mx % 1 != 0:
                     continue
 
-                coord = Coord((mx - idx_grid_offset_x) // 2, my - idx_grid_offset_y)
+                coord = Coord((mx - idx_grid_offset_x - 2) // 2, my - idx_grid_offset_y - y_title_offset)
+
+                if coord.x >= self._board.num_cols or coord.y >= self._board.num_rows:
+                    continue
 
                 if not mark_mode:
                     status = self._board.uncover(coord)
 
                     if status == Board.UncoverStatus.BOMB:
-                        start_x_title = int((width // 2) - (len(self.LOSER_TEXT) // 2) - len(self.LOSER_TEXT) % 2)
-                        stdscr.addstr(start_y, start_x_title, self.LOSER_TEXT)
-                        key_event = stdscr.getch()
-                        curses.echo()
-                        curses.endwin()
+                        render_outcome(self.LOSER_TEXT)
                         return self._game_over()
                     elif status == Board.UncoverStatus.WIN:
-                        start_x_title = int((width // 2) - (len(self.WINNER_TEXT) // 2) - len(self.WINNER_TEXT) % 2)
-                        stdscr.addstr(start_y, start_x_title, self.WINNER_TEXT)
-                        key_event = stdscr.getch()
-                        curses.echo()
-                        curses.endwin()
+                        render_outcome(self.WINNER_TEXT)
                         return self._win()
                 else:
                     self._board.mark(coord)
@@ -205,6 +238,4 @@ class ConsoleCurses(ConsoleBase):
 
         curses.echo()
         curses.endwin()
-
-    def render(self, msg: Optional[str] = None, show_mines: bool = False) -> None:
-        pass
+        return Board.UncoverStatus.CONTINUE
