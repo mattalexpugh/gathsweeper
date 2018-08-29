@@ -52,8 +52,7 @@ class Board():
         self.__num_mines = num_bombs
         self.__num_mines_remaining = num_bombs
         self.__num_undiscovered = num_rows * num_cols - num_bombs
-
-        self.__populate()
+        self.__populated = False
 
     def __getitem__(self, y: int) -> List['Board.Cell']:
         return [Board.Cell(v, s) for v, s in zip(self.__board[y], self.__status[y])]
@@ -76,7 +75,7 @@ class Board():
             if self.__board[loc.y][loc.x] != self.MINE:
                 self.__board[loc.y][loc.x] += 1
 
-    def __populate(self) -> None:
+    def __populate(self, exclude: Coord) -> None:
         if self.num_cols * self.num_rows <= self.num_mines:
             raise RuntimeError("Must have at least one mine-free cell.")
 
@@ -86,9 +85,11 @@ class Board():
         while len(self.__mine_locations) < self.num_mines:
             coord = self.get_coord(f_rand_col(), f_rand_row())
 
-            if coord not in self.__mine_locations:
+            if coord not in self.__mine_locations and coord != exclude:
                 self.__mine_locations.add(coord)
                 self.__place_bomb(coord)
+
+        self.__populated = True
 
     def __get_empty_region(self, coord: Coord) -> Generator[Coord, None, None]:
         if self.__status[coord.y][coord.x] == Board.CellStatus.UNDISCOVERED and self.__board[coord.y][coord.x] == 0:
@@ -119,6 +120,9 @@ class Board():
         return self.__board[coord.y][coord.x] == self.MINE
 
     def uncover(self, coord: Coord) -> int:
+        if not self.__populated:
+            self.__populate(exclude=coord)
+
         if self.__status[coord.y][coord.x] != Board.CellStatus.UNDISCOVERED:
             return Board.UncoverStatus.CONTINUE
         elif self.__bomb_at(coord):
